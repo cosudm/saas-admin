@@ -321,11 +321,52 @@ export async function generate(db, requestId) {
     await db.prepare("INSERT INTO mcp_resources (id,package_id,name,kind,uri,description,receipt_id) VALUES (?,?,?,?,?,?,?)")
       .bind(newId("rsc"), pkgId, rsc.name, rsc.kind || "reference", rsc.uri ?? null, rsc.description ?? null, pr.receipt_id).run();
   }
+  // ---- auto-provision the live MCP server from the approved manifest ----
+  let liveSlug = slug;
+  if (await db.prepare("SELECT id FROM servers WHERE slug=?").bind(liveSlug).first()) {
+    liveSlug = `${liveSlug}-${newId("x").slice(-4)}`;
+  }
+  const ts = now();
+  const srcId = newId("src");
+  await db.prepare("INSERT INTO api_sources (id,name,protocol,base_url,spec_text,spec_url,tool_count,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)")
+    .bind(srcId, (tenant?.name || "Tenant") + " Package", "package", "", null, null, manifest.families.tools.length, ts, ts).run();
+  const srvId = newId("srv");
+  const instructions = manifest.families.instructions[0]?.description || manifest.families.instructions[0]?.name || "";
+  await db.prepare(`INSERT INTO servers (id,slug,name,description,source_id,code_mode,enabled,package_id,tenant_id,created_at,updated_at)
+    VALUES (?,?,?,?,?,0,1,?,?,?,?)`)
+    .bind(srvId, liveSlug, (tenant?.name || "Tenant") + " Server", instructions, srcId, pkgId, req.tenant_id, ts, ts).run();
+  const opFor = cap => {
+    if (cap === "identity-lookup") return "graph_position";
+    if (cap === "governed-search") return "udm_search";
+    if (/report|filing|tax|compliance|severance/.test(cap)) return "report_due";
+    return "capability_info";
+  };
+  const schemaFor = op => op === "udm_search"
+    ? { type: "object", properties: { query: { type: "string", description: "Keyword search over the UDM lattice, obligations and forms." } }, required: ["query"] }
+    : op === "report_due"
+      ? { type: "object", properties: { period: { type: "string", description: "YYYY-MM reporting period (defaults to current month)." } }, required: [] }
+      : { type: "object", properties: {}, required: [] };
+  for (const t of manifest.families.tools) {
+    const cap = t.name.replace(/_run$/, "").replace(/_/g, "-");
+    const op = opFor(cap);
+    await db.prepare(`INSERT INTO tools (id,server_id,name,method,path,summary,description,input_schema,annotations,governance,mapping,enabled,curated,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,1,0,?,?)`)
+      .bind(newId("tool"), srvId, t.name, "CORE", cap, t.description ?? null,
+        (t.description || "") + ` Answers come from the governed core for tenant ${tenant?.name || req.tenant_id}; deterministic, cited, receipted.`,
+        JSON.stringify(schemaFor(op)),
+        JSON.stringify({ readOnlyHint: op !== "report_due", idempotentHint: true, openWorldHint: false }),
+        t.governance || "Read · identity-scoped",
+        JSON.stringify({ kind: "core", op, tenant_id: req.tenant_id, capability: cap, package_id: pkgId }),
+        ts, ts).run();
+  }
+  manifest.proposed_endpoint = `/mcp/${liveSlug}`;
+  await db.prepare("UPDATE igb_generated_packages SET manifest_json=? WHERE id=?").bind(JSON.stringify(manifest), pkgId).run();
   await db.prepare("INSERT INTO ig_surface_bindings (id,tenant_id,surface,binding_ref,package_id,receipt_id) VALUES (?,?,?,?,?,?)")
-    .bind(newId("bind"), req.tenant_id, "mcp_server", `/mcp/${slug}`, pkgId, pr.receipt_id).run();
+    .bind(newId("bind"), req.tenant_id, "mcp_server", `/mcp/${liveSlug}`, pkgId, pr.receipt_id).run();
   await db.prepare("UPDATE igb_intake_requests SET status='generated' WHERE id=?").bind(requestId).run();
   return { package_id: pkgId, request_id: requestId, tenant_id: req.tenant_id,
-    manifest, receipt_id: pr.receipt_id, status: "generated" };
+    manifest, receipt_id: pr.receipt_id, status: "generated",
+    endpoint: `/mcp/${liveSlug}`, server_id: srvId, provisioned_tools: manifest.families.tools.length };
 }
 
 function safeParse(s) { try { return JSON.parse(s); } catch { return {}; } }

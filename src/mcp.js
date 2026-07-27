@@ -1,7 +1,7 @@
 /* MCP protocol (Streamable HTTP, JSON-RPC 2.0) with Code Mode meta-tools
    and hybrid keyword search — Workers port. */
 import { executeTool, mcpLog, newId, now } from "./runtime.js";
-import { CORE_TOOLS, callCoreTool } from "./core.js";
+import { CORE_TOOLS, callCoreTool, makeReceipt } from "./core.js";
 
 export const PROTOCOL_VERSION = "2025-06-18";
 const SERVER_INFO = { name: "iosmcp-gateway-bridge", version: "1.0.0" };
@@ -214,6 +214,7 @@ export async function handleRpc(db, slug, body) {
     }
     const tool = enabled.find(t => t.name === name);
     if (!tool) return res(id, toolError(`Unknown tool \`${name}\`. Use tools/list to see available tools.`));
+    if (tool.mapping?.kind === "core") return res(id, await executeCoreMapped(db, server, tool, args));
     const result = await executeTool(db, server, tool, args, auth, "mcp");
     if (!result.ok) await log(db, server, "warning", `${name} failed: ${result.text.slice(0, 200)}`);
     return res(id, toolResult(result));
@@ -222,6 +223,57 @@ export async function handleRpc(db, slug, body) {
   if (method === "resources/list") return res(id, { resources: [] });
   if (method === "prompts/list") return res(id, { prompts: [] });
   return err(id, -32601, `Method not found: ${method}`);
+}
+
+/* ---------------- package-provisioned tools: execute against the governed core ----------------
+   Identity Graph Builder packages provision servers whose tools map to core engine
+   operations for a fixed tenant — deterministic, cited, receipted. No upstream API needed. */
+async function executeCoreMapped(db, server, tool, args) {
+  const t0 = Date.now();
+  const invId = newId("inv");
+  const m = tool.mapping || {};
+  let result;
+  try {
+    if (["graph_position", "determine", "report_due"].includes(m.op)) {
+      const coreArgs = { tenant_id: m.tenant_id };
+      if (m.op === "report_due" && args?.period) coreArgs.period = args.period;
+      result = await callCoreTool(db, m.op, coreArgs, { invocation_id: invId });
+    } else if (m.op === "udm_search") {
+      const q = `%${(args?.query || "").toLowerCase()}%`;
+      const codes = (await db.prepare(
+        "SELECT system_id, code, title FROM codes WHERE lower(code) LIKE ? OR lower(title) LIKE ? LIMIT 15").bind(q, q).all()).results;
+      const reqs = (await db.prepare(
+        `SELECT r.name, r.frequency, b.acronym, f.form_code FROM reporting_requirements r
+         JOIN regulatory_bodies b ON b.id=r.body_id LEFT JOIN reporting_forms f ON f.id=r.form_id
+         WHERE lower(r.name) LIKE ? LIMIT 15`).bind(q).all()).results;
+      const out = { status: (codes.length || reqs.length) ? "DETERMINED" : "NO_DETERMINATION",
+        query: args?.query || "", lattice_matches: codes, obligation_matches: reqs,
+        note: "Governed search answers only from the UDM lattice and the reporting matrix — the closed world." };
+      const citations = [{ source_id: "src_udm_master", source: "Universal Decoding Matrix — Master Workbook", cited_for: "lattice search" }];
+      const r = await makeReceipt(db, { kind: "tool_invocation", subject: tool.name, tenant_id: m.tenant_id,
+        input: { tool: tool.name, args: args || {} }, output: out, citations, invocation_id: invId });
+      result = { ...out, citations, ...r };
+    } else { // capability_info — provisioned capability awaiting an upstream connector binding
+      const out = { status: "PROVISIONED_PENDING_BINDING", capability: m.capability, package_id: m.package_id,
+        note: `The '${m.capability}' capability is provisioned and governed, but its upstream data source is not yet bound. ` +
+          "Bind a connector (Gateway Bridge → Import API) to activate live execution. Until then this tool reports its manifest only.",
+        governance: tool.governance };
+      const r = await makeReceipt(db, { kind: "tool_invocation", subject: tool.name, tenant_id: m.tenant_id,
+        input: { tool: tool.name, args: args || {} }, output: out, invocation_id: invId });
+      result = { ...out, ...r };
+    }
+    const failed = result.status === "NO_DETERMINATION" || result.valid === false;
+    const text = JSON.stringify(result, null, 2);
+    await db.prepare(`INSERT INTO invocations (id,server_id,server_slug,tool_name,method,path,status,http_status,latency_ms,resp_bytes,tokens_est,via,ts)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .bind(invId, server.id, server.slug, tool.name, "CORE", m.op || tool.name,
+        failed ? "no_determination" : "ok", 200, Date.now() - t0, text.length, Math.floor(text.length / 4), "mcp", now()).run();
+    const out = { content: [{ type: "text", text }], isError: false };
+    if (result.receipt_id) out._meta = { "iosmcp.core": { receipt_id: result.receipt_id, chain_hash: result.chain_hash, status: result.status } };
+    return out;
+  } catch (e) {
+    return toolError(`Core-mapped execution error: ${e.message}`);
+  }
 }
 
 async function callMeta(db, server, tools, auth, id, name, args) {

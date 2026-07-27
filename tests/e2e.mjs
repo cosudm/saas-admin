@@ -152,6 +152,31 @@ console.log("\n8. Identity Graph Builder — INGEST → RESOLVE → APPROVE → 
   ok(arts.bindings.length === 1 && arts.bindings[0].binding_ref.startsWith("/mcp/"), "ig_surface_bindings proposes the MCP endpoint");
   const rv = await post(`/api/receipts/${gen.receipt_id}/verify`, {});
   ok(rv.valid === true, "package receipt chains back through approval → resolve → ingest", rv.error);
+  // ---- auto-provisioned live MCP server ----
+  ok(!!gen.endpoint && gen.endpoint.startsWith("/mcp/"), "GENERATE auto-provisions a live MCP endpoint", gen.endpoint);
+  const slug = gen.endpoint.split("/").pop();
+  const tl2 = await rpc(slug, "tools/list", {});
+  ok((tl2?.tools || []).length >= 3, "provisioned server lists its governed tools", (tl2?.tools || []).map(t => t.name).join(","));
+  const gp2 = await rpc(slug, "tools/call", { name: "identity_lookup_run", arguments: {} });
+  const gpBody = JSON.parse(gp2.content[0].text);
+  ok(gpBody.status === "DETERMINED" && gpBody.industry_positions?.some(p => p.code === "GI-005"),
+    "identity_lookup_run answers from the tenant's Identity Graph");
+  ok(!!gp2._meta?.["iosmcp.core"]?.receipt_id, "provisioned tool calls are receipted");
+  const rr = await rpc(slug, "tools/call", { name: "regulatory_reporting_run", arguments: { period: "2026-08" } });
+  const rrBody = JSON.parse(rr.content[0].text);
+  ok(rrBody.status === "DETERMINED" && rrBody.events?.length >= 1 && rrBody.events.every(e => e.receipt_id),
+    "reporting tool materializes receipted events via the core engine", rrBody.reason);
+  const gs = await rpc(slug, "tools/call", { name: "governed_search_run", arguments: { query: "production" } });
+  const gsBody = JSON.parse(gs.content[0].text);
+  ok(gsBody.status === "DETERMINED" && (gsBody.obligation_matches?.length || gsBody.lattice_matches?.length),
+    "governed_search_run searches the closed world only");
+  const bindTool = (tl2.tools || []).find(t => !["identity_lookup_run","governed_search_run"].includes(t.name) && !/report|filing|tax/.test(t.name));
+  if (bindTool) {
+    const ci = await rpc(slug, "tools/call", { name: bindTool.name, arguments: {} });
+    const ciBody = JSON.parse(ci.content[0].text);
+    ok(ciBody.status === "PROVISIONED_PENDING_BINDING" && !!ciBody.receipt_id,
+      "unbound capability reports pending connector binding (receipted, never guesses)", bindTool.name);
+  }
 }
 
 console.log("\n9. Extraction precision — weak-token regression");

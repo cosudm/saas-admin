@@ -430,7 +430,7 @@ const S = { overview:null, servers:[], tools:[], auth:[], analytics:null, invoca
             selTool:null, toolQuery:"", toolServer:"", invStatus:"", connectSel:"", base:location.origin };
 const IMP = { proto:"rest", src:"", url:"", baseUrl:"", name:"", codeMode:false, authId:"", busy:false, parsed:null, error:null, committed:null };
 
-const PROTO_LABELS = {rest:["REST","OpenAPI 3.x / Swagger 2"],graphql:["GraphQL","SDL / introspection"],soap:["SOAP","WSDL"],grpc:["gRPC",".proto"]};
+const PROTO_LABELS = {rest:["REST","OpenAPI 3.x / Swagger 2"],graphql:["GraphQL","SDL / introspection"],soap:["SOAP","WSDL"],grpc:["gRPC",".proto"],package:["Package","IGB provisioned"]};
 
 /* ---------- sample specs ---------- */
 const SAMPLE_GQL = `# WellView GraphQL API (sample)
@@ -1319,11 +1319,11 @@ VIEWS.builder=async function(){
         ${BLD.pkg?`<div class="card mb14" style="border-color:#9fd3a8"><div class="card-pad flex" style="border-bottom:1px solid var(--line-soft)"><b>${esc(BLD.pkg.manifest?.tenant?.name||"")} MCP Package</b>
           <span class="chip cat" style="margin-left:10px;background:#dff6dd;color:#0e6b0e">generated</span>
           <button class="copyid" style="margin-left:8px" data-copy="${esc(BLD.pkg.receipt_id)}">${I(P.copy,12)} <span style="font-family:ui-monospace,Menlo,monospace;font-size:11px">${esc(BLD.pkg.receipt_id)}</span></button>
-          <span class="mut small" style="margin-left:auto">proposed ${esc(BLD.pkg.manifest?.proposed_endpoint||"")}</span></div>
+          <span style="margin-left:auto" class="flex gap8"><span class="chip cat" style="background:#dff6dd;color:#0e6b0e">live</span><button class="copyid" data-copy="${esc(location.origin+(BLD.pkg.endpoint||BLD.pkg.manifest?.proposed_endpoint||""))}">${I(P.copy,12)} <span style="font-family:ui-monospace,Menlo,monospace;font-size:11px">${esc(location.origin+(BLD.pkg.endpoint||BLD.pkg.manifest?.proposed_endpoint||""))}</span></button></span></div>
           <div class="card-pad" style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px">
             ${Object.entries(BLD.pkg.manifest?.families||{}).map(([f,items])=>`<div class="stattile" style="padding:10px 12px"><span class="sl" style="font-size:11px">${esc(famLabel[f]||f)}</span><div class="sv" style="font-size:18px">${items.length}</div></div>`).join("")}
           </div>
-          <div class="card-pad small mut" style="border-top:1px solid var(--line-soft)">10 provisioned object families · every artifact links to receipt <span style="font-family:ui-monospace,Menlo,monospace">${esc(BLD.pkg.receipt_id)}</span> · <a href="/api/igb/packages/${esc(BLD.pkg.package_id)}" target="_blank">full package JSON</a></div>
+          <div class="card-pad small mut" style="border-top:1px solid var(--line-soft)">Auto-provisioned as a live governed MCP server — <a href="#/servers">manage it</a> or <a href="#/connect">connect an AI client</a>. 10 provisioned object families · every artifact links to receipt <span style="font-family:ui-monospace,Menlo,monospace">${esc(BLD.pkg.receipt_id)}</span> · <a href="/api/igb/packages/${esc(BLD.pkg.package_id)}" target="_blank">full package JSON</a></div>
         </div>`:""}
         ${Object.entries(byFam).map(([f,list])=>`
         <div class="card mb14"><div class="card-pad flex" style="border-bottom:1px solid var(--line-soft);padding-top:12px;padding-bottom:12px">

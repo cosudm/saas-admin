@@ -111,6 +111,14 @@ resources). 8 families are approval-gated: **nothing is provisioned until a chec
 artifact links to a receipt chained back through approval → resolve → ingest.
 Console: **Identity Graph Builder** under Gateway Bridge. API: `/api/igb/*`.
 
+**GENERATE auto-provisions a live MCP server** (migration `0009`): the approved package
+materializes as `/mcp/{tenant-slug}-server` with its tools mapped to the governed core —
+`identity_lookup_run` answers from the tenant's Identity Graph, reporting tools run
+`report_due` and materialize receipted events, `governed_search_run` searches only the
+closed world, and capabilities without a bound upstream report
+`PROVISIONED_PENDING_BINDING` (receipted — they never guess) until a connector is imported
+via the Gateway Bridge. The endpoint appears immediately in MCP Servers and Connect AI Client.
+
 See `PREFLIGHT.md` for the pre-push checklist.
 
 ## Notes
