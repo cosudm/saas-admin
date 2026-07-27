@@ -3,15 +3,14 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "IOS+ MCP Gateway Bridge \u2014 any API (REST/GraphQL/SOAP/gRPC) into governed MCP tools, on Cloudflare Workers + D1.",
+  "description": "IOS+ MCP Gateway Bridge — any API (REST/GraphQL/SOAP/gRPC) into governed MCP tools, on Cloudflare Workers + D1.",
   "scripts": {
-    "build": "echo 'Gateway Bridge: worker + static console \u2014 nothing to build'",
+    "build": "echo 'Gateway Bridge: worker + static console — nothing to build'",
     "dev": "wrangler dev",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
     "predeploy": "npm run db:migrate:remote",
-    "deploy": "wrangler deploy",
-    "test": "node tests/e2e.mjs"
+    "deploy": "wrangler deploy"
   },
   "dependencies": {
     "yaml": "^2.6.0"

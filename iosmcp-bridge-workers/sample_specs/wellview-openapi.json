@@ -1,0 +1,200 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "WellView Field API",
+    "version": "1.2.0",
+    "description": "Every well, one workspace \u2014 wells, production and regulator-ready filings across all 30 oil & gas states."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8787/demo-api"
+    }
+  ],
+  "paths": {
+    "/wells": {
+      "get": {
+        "operationId": "listWells",
+        "summary": "List wells with optional state/status/operator filters",
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Two-letter state, e.g. TX"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "producing",
+                "shut-in",
+                "drilling"
+              ]
+            }
+          },
+          {
+            "name": "operator",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Operator name contains"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/wells/{api14}": {
+      "get": {
+        "operationId": "getWell",
+        "summary": "Get a well by API-14 number",
+        "parameters": [
+          {
+            "name": "api14",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/wells/{api14}/production": {
+      "get": {
+        "operationId": "getProduction",
+        "summary": "Monthly production series for a well",
+        "parameters": [
+          {
+            "name": "api14",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "months",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 6
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/filings": {
+      "get": {
+        "operationId": "listFilings",
+        "summary": "List regulatory filings",
+        "parameters": [
+          {
+            "name": "agency",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "post": {
+        "operationId": "draftFiling",
+        "summary": "Draft a regulatory filing (held for human submission)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "api14": {
+                    "type": "string",
+                    "description": "Well API-14 number"
+                  },
+                  "form": {
+                    "type": "string",
+                    "description": "Form name, e.g. PR, W-10, C-115"
+                  },
+                  "agency": {
+                    "type": "string",
+                    "description": "Agency, e.g. TX RRC, OCC, NM OCD"
+                  },
+                  "period": {
+                    "type": "string",
+                    "description": "Reporting period YYYY-MM"
+                  },
+                  "notes": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "api14",
+                  "form",
+                  "agency",
+                  "period"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        }
+      }
+    },
+    "/filings/{filing_id}": {
+      "delete": {
+        "operationId": "withdrawFiling",
+        "summary": "Withdraw a draft filing",
+        "parameters": [
+          {
+            "name": "filing_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    }
+  }
+}
