@@ -197,5 +197,26 @@ console.log("\n9. Extraction precision — weak-token regression");
   ok(!mInd.includes("GI-005"), "media context does not leak into GI-005");
 }
 
+console.log("\n10. Guided intake (Easy Setup) — clicks are facts, SST pinned");
+{
+  const opts = await get("/api/igb/options");
+  ok(opts.industries.length >= 80 && opts.states.length >= 25, "options serve the full lattice pick-lists",
+    `${opts.industries.length} industries, ${opts.states.length} states`);
+  const g = await post("/api/igb/intake", { requested_by: "Jane Doe", auto_approve: true,
+    selections: { org_name: "Jane's Corner Store", industry_codes: ["GI-046"], states: ["jur_texas"],
+      activities: ["invoicing", "scheduling"], integrations: ["quickbooks"] } });
+  ok(g.status === "approved" || g.status === "in_review", "guided intake runs the same pipeline", g.detail?.request?.status);
+  ok(g.facts.some(f => f.resolved_code_id) || g.facts.some(f => String(f.value).includes("GI-046")),
+    "clicked industry lands as pre-resolved lattice fact");
+  const gen = await post(`/api/igb/requests/${g.request_id}/generate`, {});
+  ok(gen.status === "generated" && gen.endpoint, "guided flow generates a live endpoint", gen.detail || gen.endpoint);
+  const bad = await post("/api/igb/intake", { requested_by: "Jane Doe",
+    selections: { industry_codes: ["GI-999"], states: ["jur_texas"] } });
+  ok(!!bad.detail && /not in the lattice/.test(bad.detail), "invalid clicked node FAILS CLOSED");
+  const rc = await get(`/api/receipts/${gen.receipt_id}`);
+  ok(!!rc.sst && JSON.parse(typeof rc.sst === "string" ? rc.sst : JSON.stringify(rc.sst)).scl === "0.1",
+    "receipts carry the Semantic State Tuple (SST)");
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

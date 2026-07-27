@@ -73,28 +73,50 @@ async function matchJurisdictions(db, text) {
   return rows.filter(j => lower.includes(j.name.toLowerCase()));
 }
 
-/* ================= Stage 1 · INGEST (graph facts) ================= */
-export async function ingest(db, { text, requested_by, channel = "text" }) {
-  if (!text?.trim()) throw Object.assign(new Error("Describe the business — the intake text is empty."), { code: 422 });
+/* ================= Stage 1 · INGEST (graph facts) =================
+   Two channels into the same receipted pipeline:
+   - text/voice: deterministic extraction from a described intent
+   - guided: click-selected facts (Jane Doe mode) — the clicks ARE the facts,
+     pre-resolved against the lattice, no extraction needed, 100% precision. */
+export async function ingest(db, { text, requested_by, channel = "text", selections = null }) {
+  if (!selections && !text?.trim()) throw Object.assign(new Error("Describe the business — the intake text is empty."), { code: 422 });
   if (!requested_by?.trim()) throw Object.assign(new Error("requested_by (the maker) is required."), { code: 422 });
   const reqId = newId("igbreq");
   const facts = [];
-  const entity = extractEntity(text);
-  if (entity) facts.push({ kind: "entity", key: "organization", value: entity });
-  const industries = await matchIndustries(db, text);
-  for (const c of industries) facts.push({ kind: "activity", key: "industry", value: `${c.code} — ${c.title}`, resolved_code_id: c.id });
-  const jurs = await matchJurisdictions(db, text);
-  for (const j of jurs) facts.push({ kind: "location", key: "operates_in", value: j.name, resolved_jurisdiction_id: j.id });
-  const lower = text.toLowerCase();
-  for (const a of ACTIVITIES) if (lower.includes(a)) facts.push({ kind: "activity", key: "does", value: a });
-  for (const i of INTEGRATIONS) if (new RegExp(`[^a-z]${i}[^a-z]?`).test(" " + lower + " ")) facts.push({ kind: "integration", key: "uses", value: i });
-  const wellsM = text.match(/(\d+)\s*(?:wells|leases|students|locations|sites|employees)/i);
-  if (wellsM) facts.push({ kind: "metric", key: wellsM[0].split(/\s+/).pop().toLowerCase(), value: wellsM[1] });
+  if (selections) {
+    channel = "guided";
+    if (selections.org_name?.trim()) facts.push({ kind: "entity", key: "organization", value: selections.org_name.trim() });
+    for (const code of selections.industry_codes || []) {
+      const c = await db.prepare("SELECT * FROM codes WHERE system_id='UDM-GI' AND code=?").bind(code).first();
+      if (!c) throw Object.assign(new Error(`'${code}' is not in the lattice — guided selections must be valid nodes (fail closed).`), { code: 422 });
+      facts.push({ kind: "activity", key: "industry", value: `${c.code} — ${c.title}`, resolved_code_id: c.id });
+    }
+    for (const st of selections.states || []) {
+      const j = await db.prepare("SELECT * FROM jurisdictions WHERE id=? OR name=?").bind(st, st).first();
+      if (!j) throw Object.assign(new Error(`'${st}' is not in the jurisdiction tree (fail closed).`), { code: 422 });
+      facts.push({ kind: "location", key: "operates_in", value: j.name, resolved_jurisdiction_id: j.id });
+    }
+    for (const a of selections.activities || []) if (ACTIVITIES.includes(a)) facts.push({ kind: "activity", key: "does", value: a });
+    for (const i of selections.integrations || []) if (INTEGRATIONS.includes(i)) facts.push({ kind: "integration", key: "uses", value: i });
+    text = text || `[guided intake] ${facts.map(f => f.value).join("; ")}`;
+  } else {
+    const entity = extractEntity(text);
+    if (entity) facts.push({ kind: "entity", key: "organization", value: entity });
+    const industries = await matchIndustries(db, text);
+    for (const c of industries) facts.push({ kind: "activity", key: "industry", value: `${c.code} — ${c.title}`, resolved_code_id: c.id });
+    const jurs = await matchJurisdictions(db, text);
+    for (const j of jurs) facts.push({ kind: "location", key: "operates_in", value: j.name, resolved_jurisdiction_id: j.id });
+    const lower = text.toLowerCase();
+    for (const a of ACTIVITIES) if (lower.includes(a)) facts.push({ kind: "activity", key: "does", value: a });
+    for (const i of INTEGRATIONS) if (new RegExp(`[^a-z]${i}[^a-z]?`).test(" " + lower + " ")) facts.push({ kind: "integration", key: "uses", value: i });
+    const wellsM = text.match(/(\d+)\s*(?:wells|leases|students|locations|sites|employees)/i);
+    if (wellsM) facts.push({ kind: "metric", key: wellsM[0].split(/\s+/).pop().toLowerCase(), value: wellsM[1] });
+  }
 
   const r = await makeReceipt(db, { kind: "igb_ingest", subject: reqId,
-    input: { text, requested_by, channel },
+    input: { text, requested_by, channel, selections: selections || undefined },
     output: { facts: facts.map(f => ({ kind: f.kind, key: f.key, value: f.value })) },
-    citations: [{ source_id: "src_udm_master", source: "Universal Decoding Matrix — Master Workbook", cited_for: "extraction catalogs (industries, jurisdictions)" }] });
+    citations: [{ source_id: "src_udm_master", source: "Universal Decoding Matrix — Master Workbook", cited_for: channel === "guided" ? "guided selections validated against the lattice" : "extraction catalogs (industries, jurisdictions)" }] });
 
   await db.prepare("INSERT INTO igb_intake_requests (id,raw_text,channel,requested_by,status,receipt_id,created_at) VALUES (?,?,?,?,?,?,?)")
     .bind(reqId, text, channel, requested_by, "ingested", r.receipt_id, now()).run();
@@ -392,9 +414,20 @@ export async function handleIgb(request, env, url, path, body) {
   let m;
   try {
     if (path === "/api/igb/intake" && method === "POST") {
-      const ing = await ingest(db, { text: body?.text, requested_by: body?.requested_by, channel: body?.channel });
+      const ing = await ingest(db, { text: body?.text, requested_by: body?.requested_by, channel: body?.channel, selections: body?.selections });
       const res = await resolve(db, ing.request_id);
+      // Guided (consumer) intake: the review screen the user confirms IS the human review;
+      // the platform's curated blueprint acts as checker of record (consumer tier —
+      // enterprise tier keeps full named maker-checker).
+      if (body?.selections && body?.auto_approve) {
+        await decideReview(db, res.review_id, { checker: "IOSMCP Curated Blueprint (platform)", approve_all: true });
+      }
       return json({ ...res, ingest_receipt_id: ing.receipt_id, facts: ing.facts, detail: await requestDetail(db, ing.request_id) });
+    }
+    if (path === "/api/igb/options" && method === "GET") {
+      const industries = (await db.prepare("SELECT code, title FROM codes WHERE system_id='UDM-GI' ORDER BY title").all()).results;
+      const states = (await db.prepare("SELECT id, name FROM jurisdictions WHERE kind='state' ORDER BY name").all()).results;
+      return json({ industries, states, activities: ACTIVITIES, integrations: INTEGRATIONS });
     }
     if (path === "/api/igb/requests" && method === "GET") {
       return json((await db.prepare("SELECT * FROM igb_intake_requests ORDER BY created_at DESC LIMIT 50").all()).results);

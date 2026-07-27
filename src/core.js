@@ -20,6 +20,10 @@ export async function sha256(text) {
 /* ---------------- receipt chain ---------------- */
 let lastReceiptCache = null; // per-isolate hint only; the DB row is the truth
 
+/* Semantic State Tuple — pinned into every receipt (SCL §6). Atlas/engine fields
+   update when the embedding atlas ships; the tuple makes lineage reproducible. */
+export const SST = { scl: "0.1", lattice: "L1-2026.07", atlas: "none", engine: "deterministic-core" };
+
 export async function makeReceipt(db, { kind, subject, tenant_id = null, input, output, citations = [], prev_receipt_id = null, invocation_id = null }) {
   const inputJson = canonical(input ?? {});
   const outputJson = canonical(output ?? {});
@@ -32,10 +36,10 @@ export async function makeReceipt(db, { kind, subject, tenant_id = null, input, 
   const prev = prev_receipt_id ? await db.prepare("SELECT chain_hash FROM audit_receipts WHERE id=?").bind(prev_receipt_id).first() : null;
   const chainHash = await sha256((prev?.chain_hash || "genesis") + inputHash + outputHash);
   const id = newId("rcpt");
-  await db.prepare(`INSERT INTO audit_receipts (id,kind,subject,tenant_id,input_json,output_json,input_hash,output_hash,citations_json,prev_receipt_id,chain_hash,created_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+  await db.prepare(`INSERT INTO audit_receipts (id,kind,subject,tenant_id,input_json,output_json,input_hash,output_hash,citations_json,prev_receipt_id,chain_hash,created_at,sst)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .bind(id, kind, subject ?? null, tenant_id, inputJson, outputJson, inputHash, outputHash,
-      JSON.stringify(citations), prev_receipt_id ?? null, chainHash, now()).run();
+      JSON.stringify(citations), prev_receipt_id ?? null, chainHash, now(), JSON.stringify(SST)).run();
   if (invocation_id) {
     await db.prepare("INSERT INTO audit_invocations (id,receipt_id,invocation_id) VALUES (?,?,?)")
       .bind(newId("ainv"), id, invocation_id).run();
