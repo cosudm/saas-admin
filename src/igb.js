@@ -297,6 +297,14 @@ export async function decideReview(db, reviewId, { checker, decisions = [], appr
 
 /* ================= Stage 4 · GENERATE (package) ================= */
 export async function generate(db, requestId) {
+  {
+    const reqRow = await db.prepare("SELECT tenant_id FROM igb_intake_requests WHERE id=?").bind(requestId).first();
+    if (reqRow?.tenant_id) {
+      const { provisioningAllowed } = await import("./billing.js");
+      const gate = await provisioningAllowed(db, reqRow.tenant_id);
+      if (!gate.allowed) throw Object.assign(new Error(gate.reason), { code: 402 });
+    }
+  }
   const req = await db.prepare("SELECT * FROM igb_intake_requests WHERE id=?").bind(requestId).first();
   if (!req) throw Object.assign(new Error("intake request not found"), { code: 404 });
   const review = await db.prepare("SELECT * FROM igb_approval_reviews WHERE request_id=? ORDER BY rowid DESC LIMIT 1").bind(requestId).first();

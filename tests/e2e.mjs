@@ -303,5 +303,52 @@ console.log("\n12. Segment Response + WATCH");
   ok(segs.length >= 5 && segs.every(x => x.tenant_id === g.tenant_id), "segments landed under the server's tenant identity graph");
 }
 
+console.log("\n13. Billing spine — integer money, idempotency, HMAC fail-closed, past_due gate");
+{
+  const { createHmac } = await import("node:crypto");
+  const RB = Math.random().toString(36).slice(2, 8);
+  const plans = await get("/api/billing/plans");
+  ok(plans.length >= 3 && plans.every(p => Number.isInteger(p.base_ucents)), "plans seeded with integer micro-cents");
+  // tenant with real usage from earlier sections
+  const g = await post("/api/igb/intake", { requested_by: "Bill Payer", auto_approve: true,
+    selections: { org_name: "Billing Test Co", industry_codes: ["GI-005"], states: ["jur_texas"], activities: ["production reporting"], integrations: [] } });
+  const gen1 = await post(`/api/igb/requests/${g.request_id}/generate`, {});
+  ok(gen1.status === "generated", "billing test tenant provisions while account is in good standing", gen1.detail);
+  const period = "2026-07";
+  const r1 = await post(`/api/billing/accounts/${g.tenant_id}/rollup`, { period });
+  const r2 = await post(`/api/billing/accounts/${g.tenant_id}/rollup`, { period });
+  ok(!!r1.receipt_id && r2.idempotent === true, "rollup is receipted and idempotent (deterministic id)");
+  const inv = await post(`/api/billing/accounts/${g.tenant_id}/invoice`, { period });
+  ok(Number.isInteger(inv.total_ucents) && Number.isInteger(inv.charge_cents) && Number.isInteger(inv.carry_out_ucents),
+    "invoice money is integers end to end");
+  ok(inv.total_ucents === inv.charge_cents * 1000000 + inv.carry_out_ucents, "charge + carry reconstructs total exactly (no float drift)");
+  const inv2 = await post(`/api/billing/accounts/${g.tenant_id}/invoice`, { period });
+  ok(inv2.idempotent === true, "invoice is idempotent — re-running a cron cannot double-bill");
+  // webhook: unsigned → refused before any state change
+  const bad = await fetch(BASE + "/api/billing/webhook", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: "evt_forged_"+RB, type: "transfer.succeeded" }) });
+  ok(bad.status === 401, "unsigned webhook FAILS CLOSED with 401");
+  const sign = body => "sha256=" + createHmac("sha256", "devtestsecret").update(body).digest("hex");
+  const failBody = JSON.stringify({ id: "evt_fail_"+RB, type: "transfer.failed", tags: { invoice_id: inv.id || inv2.id, tenant_id: g.tenant_id } });
+  const wf = await fetch(BASE + "/api/billing/webhook", { method: "POST", headers: { "Content-Type": "application/json", "Finix-Signature": sign(failBody) }, body: failBody });
+  ok((await wf.json()).status === "processed", "HMAC-verified charge_failed webhook processes");
+  const acct = await get(`/api/billing/accounts/${g.tenant_id}`);
+  ok(acct.status === "past_due", "failed charge marks the account past_due");
+  // past_due pauses NEW provisioning only
+  const g2 = await post("/api/igb/intake", { requested_by: "Bill Payer", auto_approve: true,
+    selections: { org_name: "Billing Test Co", industry_codes: ["GI-005"], states: ["jur_texas"], activities: ["compliance"], integrations: [] } });
+  const blocked = await (await fetch(BASE + `/api/igb/requests/${g2.request_id}/generate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).json();
+  ok(!!blocked.detail && /past due/i.test(blocked.detail), "past_due tenant cannot provision NEW servers (402, fail closed)");
+  const gp = await rpc(gen1.endpoint.replace("/mcp/", ""), "tools/list", {});
+  ok((gp.tools || []).length > 0, "existing servers keep answering while past_due (reads never pause)");
+  const okBody = JSON.stringify({ id: "evt_ok_"+RB, type: "transfer.succeeded", tags: { invoice_id: inv.id || inv2.id, tenant_id: g.tenant_id } });
+  await fetch(BASE + "/api/billing/webhook", { method: "POST", headers: { "Content-Type": "application/json", "Finix-Signature": sign(okBody) }, body: okBody });
+  const acct2 = await get(`/api/billing/accounts/${g.tenant_id}`);
+  ok(acct2.status === "active", "settled charge restores the account to active");
+  const gen2 = await post(`/api/igb/requests/${g2.request_id}/generate`, {});
+  ok(gen2.status === "generated", "provisioning resumes on payment");
+  const replay = await fetch(BASE + "/api/billing/webhook", { method: "POST", headers: { "Content-Type": "application/json", "Finix-Signature": sign(okBody) }, body: okBody });
+  ok((await replay.json()).status === "already_processed", "webhook replay is inert (UNIQUE external_id)");
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

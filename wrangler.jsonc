@@ -17,5 +17,7 @@
       "database_id": "771f3439-f3bc-41b3-b498-1f7fc2c4fa19"
     }
   ],
-  "observability": { "enabled": true }
+  "observability": { "enabled": true },
+  "triggers": { "crons": ["0 6 2 * *"] },
+  "vars": { "FINIX_WEBHOOK_SECRET": "" }
 }

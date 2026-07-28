@@ -11,6 +11,7 @@ import { handleFirstClass } from "./firstclass.js";
 import { handleIgb } from "./igb.js";
 import { handleDeploy } from "./deploy.js";
 import { handleWatch } from "./segment.js";
+import { handleBilling, handleBillingWebhook, billingCron } from "./billing.js";
 
 const CORS = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, POST, OPTIONS, DELETE",
   "Access-Control-Allow-Headers": "Content-Type, Authorization, Mcp-Session-Id, MCP-Protocol-Version, Last-Event-ID",
@@ -29,6 +30,10 @@ const J = (row, keys = ["input_schema", "output_schema", "annotations", "mapping
 const all = r => (r?.results || []).map(x => J(x));
 
 export default {
+  async scheduled(event, env, ctx) {
+    // monthly billing run — deterministic ids make re-runs harmless
+    ctx.waitUntil(billingCron(env.DB));
+  },
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
@@ -78,6 +83,8 @@ export default {
         const result = await handleRpc(db, mcpMatch[1], body);
         return result === null ? new Response(null, { status: 202, headers: CORS }) : json(result, 200, CORS);
       }
+      // Finix webhook needs the RAW body for HMAC verification — route it before any JSON parse
+      if (path === "/api/billing/webhook") return await handleBillingWebhook(request, env);
       if (path.startsWith("/api/")) return await handleApi(request, env, url, path);
       // static console
       return env.ASSETS.fetch(request);
@@ -92,6 +99,20 @@ async function handleApi(request, env, url, path) {
   const db = env.DB;
   const method = request.method;
   const body = ["POST", "PATCH", "PUT"].includes(method) ? await request.json().catch(() => ({})) : null;
+
+  /* Checker identity: when the console call arrives through Cloudflare Access,
+     the authenticated email is authoritative — a typed name cannot impersonate it. */
+  const accessUser = request.headers.get("Cf-Access-Authenticated-User-Email");
+  if (accessUser && body && typeof body === "object") {
+    if (path.match(/\/api\/igb\/reviews\/[\w-]+\/decide$/)) { body.checker = accessUser; body.checker_source = "cloudflare-access"; }
+    if (path.match(/\/api\/watch\/compilations\/[\w-]+\/approve$/)) { body.approver = accessUser; body.approver_source = "cloudflare-access"; }
+  }
+
+  /* ---------- Billing (non-webhook routes) ---------- */
+  if (path.startsWith("/api/billing/")) {
+    const bp = await handleBilling(request, env, url, path, body);
+    if (bp) return bp;
+  }
 
   /* ---------- Segment Response + WATCH ---------- */
   if (path.startsWith("/api/watch/")) {
