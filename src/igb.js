@@ -385,6 +385,21 @@ export async function generate(db, requestId) {
         JSON.stringify({ kind: "core", op, tenant_id: req.tenant_id, capability: cap, package_id: pkgId }),
         ts, ts).run();
   }
+  // every provisioned server carries segment_response — the operator's AI client
+  // can push any model turn into WATCH, where recurring flows become products
+  await db.prepare(`INSERT INTO tools (id,server_id,name,method,path,summary,description,input_schema,annotations,governance,mapping,enabled,curated,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,1,1,?,?)`)
+    .bind(newId("tool"), srvId, "segment_response", "CORE", "segment-response",
+      "Segment an AI response turn into governed blocks for WATCH.",
+      "Deterministically segments a model response turn (scripts, tool calls, instructions, resources, queries) into receipted WATCH segments for this tenant. Fixed grammar — identical turns yield identical segments. Nothing becomes executable without maker-checker approval.",
+      JSON.stringify({ type: "object", properties: {
+        text: { type: "string", description: "The full response-turn text to segment." },
+        conversation_id: { type: "string", description: "Stable conversation id (default 'default')." },
+        turn_no: { type: "integer", description: "Turn number within the conversation (default 1)." } }, required: ["text"] }),
+      JSON.stringify({ readOnlyHint: false, idempotentHint: true, openWorldHint: false }),
+      "Write · identity-scoped · maker-checker gated",
+      JSON.stringify({ kind: "core", op: "segment_response", tenant_id: req.tenant_id, capability: "segment-response", package_id: pkgId }),
+      ts, ts).run();
   manifest.proposed_endpoint = `/mcp/${liveSlug}`;
   await db.prepare("UPDATE igb_generated_packages SET manifest_json=? WHERE id=?").bind(JSON.stringify(manifest), pkgId).run();
   await db.prepare("INSERT INTO ig_surface_bindings (id,tenant_id,surface,binding_ref,package_id,receipt_id) VALUES (?,?,?,?,?,?)")

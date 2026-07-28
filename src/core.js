@@ -322,6 +322,14 @@ export const CORE_TOOLS = [
     description: "Recomputes input/output hashes and the chain hash for the given receipt and every ancestor. Any tamper breaks verification. Returns the verified chain.",
     input_schema: { type: "object", properties: { receipt_id: { type: "string" } }, required: ["receipt_id"] },
     annotations: { readOnlyHint: true, openWorldHint: false } },
+  { name: "segment_response",
+    summary: "Segment an AI response turn into governed blocks (scripts, tool calls, instructions, resources) for WATCH.",
+    description: "Deterministically segments a model response turn: fenced code becomes scripts (tool-call JSON becomes tool_calls), URLs become resources, imperative and numbered lines become instructions, questions become queries. The grammar is fixed — no model in the loop — so identical turns yield identical segments and hashes. Captured segments feed WATCH, where recurring flows across conversations compile into packages; nothing becomes executable without maker-checker approval. Receipted.",
+    input_schema: { type: "object", properties: {
+      text: { type: "string", description: "The full response-turn text to segment." },
+      conversation_id: { type: "string", description: "Stable id for the conversation this turn belongs to (default 'default')." },
+      turn_no: { type: "integer", description: "Turn number within the conversation (default 1)." } }, required: ["text"] },
+    annotations: { readOnlyHint: false, idempotentHint: true, openWorldHint: false } },
 ];
 
 export async function callCoreTool(db, name, args, opts = {}) {
@@ -331,6 +339,11 @@ export async function callCoreTool(db, name, args, opts = {}) {
     case "determine": return await determine(db, args, opts);
     case "report_due": return await reportDue(db, args, opts);
     case "receipt_verify": return await receiptVerify(db, args.receipt_id);
+    case "segment_response": {
+      const { segmentAndStore } = await import("./segment.js");
+      try { return await segmentAndStore(db, { tenant_id: args.tenant_id, conversation_id: args.conversation_id, turn_no: args.turn_no, text: args.text, source: opts.source || "mcp" }); }
+      catch (e) { return { status: "NO_DETERMINATION", reason: e.message }; }
+    }
     default: return { status: "NO_DETERMINATION", reason: `Unknown core tool ${name}` };
   }
 }

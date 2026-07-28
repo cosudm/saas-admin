@@ -10,6 +10,7 @@ import { handleDemoApi, demoSpec } from "./demo.js";
 import { handleFirstClass } from "./firstclass.js";
 import { handleIgb } from "./igb.js";
 import { handleDeploy } from "./deploy.js";
+import { handleWatch } from "./segment.js";
 
 const CORS = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, POST, OPTIONS, DELETE",
   "Access-Control-Allow-Headers": "Content-Type, Authorization, Mcp-Session-Id, MCP-Protocol-Version, Last-Event-ID",
@@ -91,6 +92,12 @@ async function handleApi(request, env, url, path) {
   const db = env.DB;
   const method = request.method;
   const body = ["POST", "PATCH", "PUT"].includes(method) ? await request.json().catch(() => ({})) : null;
+
+  /* ---------- Segment Response + WATCH ---------- */
+  if (path.startsWith("/api/watch/")) {
+    const wp = await handleWatch(request, env, url, path, body);
+    if (wp) return wp;
+  }
 
   /* ---------- Deployment determination + workflow CAPTURE/REPLAY ---------- */
   if (path.startsWith("/api/deploy/") || path.startsWith("/api/workflows")) {

@@ -234,10 +234,11 @@ async function executeCoreMapped(db, server, tool, args) {
   const m = tool.mapping || {};
   let result;
   try {
-    if (["graph_position", "determine", "report_due"].includes(m.op)) {
+    if (["graph_position", "determine", "report_due", "segment_response"].includes(m.op)) {
       const coreArgs = { tenant_id: m.tenant_id };
       if (m.op === "report_due" && args?.period) coreArgs.period = args.period;
-      result = await callCoreTool(db, m.op, coreArgs, { invocation_id: invId });
+      if (m.op === "segment_response") Object.assign(coreArgs, { text: args?.text, conversation_id: args?.conversation_id, turn_no: args?.turn_no });
+      result = await callCoreTool(db, m.op, coreArgs, { invocation_id: invId, source: "mcp:" + server.slug });
     } else if (m.op === "udm_search") {
       const q = `%${(args?.query || "").toLowerCase()}%`;
       const codes = (await db.prepare(

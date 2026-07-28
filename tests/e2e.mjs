@@ -170,7 +170,7 @@ console.log("\n8. Identity Graph Builder — INGEST → RESOLVE → APPROVE → 
   const gsBody = JSON.parse(gs.content[0].text);
   ok(gsBody.status === "DETERMINED" && (gsBody.obligation_matches?.length || gsBody.lattice_matches?.length),
     "governed_search_run searches the closed world only");
-  const bindTool = (tl2.tools || []).find(t => !["identity_lookup_run","governed_search_run"].includes(t.name) && !/report|filing|tax/.test(t.name));
+  const bindTool = (tl2.tools || []).find(t => !["identity_lookup_run","governed_search_run","segment_response"].includes(t.name) && !/report|filing|tax/.test(t.name));
   if (bindTool) {
     const ci = await rpc(slug, "tools/call", { name: bindTool.name, arguments: {} });
     const ciBody = JSON.parse(ci.content[0].text);
@@ -244,6 +244,63 @@ console.log("\n11. Deployment determination + workflow CAPTURE/REPLAY");
   ok(rp.status === "DETERMINED" && rp.steps.every(s => s.receipt_id), "replay executes for a new period, every step receipted");
   const bad = await post(`/api/workflows/${cap.package_id}/replay`, { tenant_id: "ten_nobody", period: "2026-10" });
   ok(bad.status === "INCOMPLETE", "replay for unknown tenant FAILS CLOSED mid-chain");
+}
+
+console.log("\n12. Segment Response + WATCH");
+{
+  const RUN = Math.random().toString(36).slice(2, 8); // unique conversation ids so local re-runs don't collide with dedup
+  const TURN = [
+    "Deploy landed. Here's what to do next:",
+    "1. Run the deploy from the site folder.",
+    "2. Verify production picked it up.",
+    "```powershell",
+    "cd C:\\work\\site",
+    "wrangler pages deploy . --project-name ediefile --branch main",
+    "```",
+    "Then check https://ediefile.pages.dev/data/tx/dir.json and https://dash.cloudflare.com for status.",
+    "```json",
+    '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"report_due","arguments":{"period":"2026-09"}}}',
+    "```",
+    "Does the Google sign-in work on the custom domain?",
+  ].join("\n");
+  const s1 = await post("/api/watch/segment", { text: TURN, conversation_id: "conv-a-"+RUN, turn_no: 1, source: "test" });
+  ok(s1.status === "SEGMENTED", "turn segments", s1.detail);
+  ok((s1.counts.script || 0) >= 1, "code fence → script", JSON.stringify(s1.counts));
+  ok((s1.counts.tool_call || 0) >= 1, "JSON-RPC fence → tool_call");
+  ok((s1.counts.resource || 0) >= 2, "URLs → resources");
+  ok((s1.counts.instruction || 0) >= 1, "numbered/imperative lines → instructions");
+  ok((s1.counts.query || 0) >= 1, "question line → query");
+  ok(!!s1.receipt_id, "segmentation is receipted");
+  const s1b = await post("/api/watch/segment", { text: TURN, conversation_id: "conv-a-"+RUN, turn_no: 1, source: "test" });
+  ok(s1b.stored === 0 && s1b.skipped_duplicates >= 5, "identical re-segmentation stores nothing (deterministic hashes dedup)");
+  const s2 = await post("/api/watch/segment", { text: TURN, conversation_id: "conv-b-"+RUN, turn_no: 3, source: "test" });
+  ok(s2.stored >= 5, "same turn in a second conversation stores fresh segments");
+  const mm = await get("/api/watch/matches");
+  ok(mm.matches.length >= 3, "recurring segments across conversations surface in WATCH", `got ${mm.matches.length}`);
+  const empty = await (await fetch(BASE + "/api/watch/segment", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: "   " }) })).json();
+  ok(!!empty.detail && /fail closed/i.test(empty.detail), "empty turn FAILS CLOSED");
+  // compile + maker-checker
+  const comp = await post("/api/watch/compile", { name: "Deploy & verify flow", segment_ids: s1.segment_ids.slice(0, 3), created_by: "console" });
+  ok(comp.status === "draft" && !!comp.receipt_id, "selection compiles to a draft package", comp.detail);
+  const selfApprove = await (await fetch(BASE + `/api/watch/compilations/${comp.compilation_id}/approve`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ approver: "console" }) })).json();
+  ok(!!selfApprove.detail && /checker must differ/i.test(selfApprove.detail), "creator cannot approve own compilation (maker-checker FAILS CLOSED)");
+  const appr = await post(`/api/watch/compilations/${comp.compilation_id}/approve`, { approver: "governance@iosmcp.com" });
+  ok(appr.status === "approved" && !!appr.receipt_id, "distinct checker approves, receipted");
+  const badComp = await (await fetch(BASE + "/api/watch/compile", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "x", segment_ids: ["seg_nope"] }) })).json();
+  ok(!!badComp.detail && /not found/i.test(badComp.detail), "compiling unknown segment FAILS CLOSED");
+  // segment_response as a live tool on a provisioned server
+  const g = await post("/api/igb/intake", { requested_by: "Watch Tester", auto_approve: true,
+    selections: { org_name: "Watch Test Co", industry_codes: ["GI-005"], states: ["jur_texas"], activities: ["production reporting"], integrations: [] } });
+  const gen = await post(`/api/igb/requests/${g.request_id}/generate`, {});
+  const slug = gen.endpoint.replace("/mcp/", "");
+  const tl = await rpc(slug, "tools/list", {});
+  ok(tl.tools.some(t => t.name === "segment_response"), "every provisioned server exposes segment_response");
+  const call = await rpc(slug, "tools/call", { name: "segment_response", arguments: { text: TURN, conversation_id: "conv-mcp-"+RUN, turn_no: 1 } });
+  const body = JSON.parse(call.content[0].text);
+  ok(body.status === "SEGMENTED" && body.stored >= 5, "AI client turn → segments via MCP, tenant-scoped", call.content[0].text.slice(0, 120));
+  ok(!!call._meta?.["iosmcp.core"]?.receipt_id, "MCP segmentation carries the receipt in _meta");
+  const segs = await get(`/api/watch/segments?tenant_id=${g.tenant_id}`);
+  ok(segs.length >= 5 && segs.every(x => x.tenant_id === g.tenant_id), "segments landed under the server's tenant identity graph");
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
