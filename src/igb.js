@@ -35,7 +35,7 @@ const ACTIVITIES = ["production reporting", "regulatory filings", "filings", "co
   "transcript evaluation", "transfer credit", "enrollment", "case triage", "vendor readiness", "vendor management",
   "invoicing", "payroll", "scheduling", "inventory", "monitoring", "incident reporting", "plugging", "completions",
   "injection", "disposal", "severance tax", "royalty"];
-const INTEGRATIONS = ["salesforce", "quickbooks", "sap", "oracle", "workday", "excel", "sharepoint", "slack",
+const INTEGRATIONS = ["enverus", "autocad", "copilot", "salesforce", "quickbooks", "sap", "oracle", "workday", "excel", "sharepoint", "slack",
   "teams", "stripe", "hubspot", "netsuite", "dynamics", "gmail", "outlook", "docusign", "box", "dropbox",
   "snowflake", "postgres", "mysql", "banner", "peoplesoft", "wellview", "sonris", "northstar"];
 
@@ -150,6 +150,10 @@ export async function resolve(db, requestId) {
   for (const f of facts.filter(x => x.kind === "location")) {
     await db.prepare("INSERT INTO ig_nodes (id,tenant_id,kind,key,value_json,code_id) VALUES (?,?,?,?,?,NULL)")
       .bind(nid(), tenantId, "jurisdiction", "operates_in", JSON.stringify(f.value)).run();
+  }
+  for (const f of facts.filter(x => x.kind === "integration")) {
+    await db.prepare("INSERT INTO ig_nodes (id,tenant_id,kind,key,value_json,code_id) VALUES (?,?,?,?,?,NULL)")
+      .bind(nid(), tenantId, "integration", "uses", JSON.stringify(f.value)).run();
   }
   for (const f of facts.filter(x => x.kind === "metric")) {
     await db.prepare("INSERT INTO ig_nodes (id,tenant_id,kind,key,value_json,code_id) VALUES (?,?,?,?,?,NULL)")

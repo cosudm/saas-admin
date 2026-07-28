@@ -218,5 +218,33 @@ console.log("\n10. Guided intake (Easy Setup) — clicks are facts, SST pinned")
     "receipts carry the Semantic State Tuple (SST)");
 }
 
+console.log("\n11. Deployment determination + workflow CAPTURE/REPLAY");
+{
+  // Chris Carter-style guided intake with a profiled tool (enverus), an add-in tool (excel), and an unprofiled one (dynamics)
+  const g = await post("/api/igb/intake", { requested_by: "Chris Carter", auto_approve: true,
+    selections: { org_name: "Carter Operating", industry_codes: ["GI-005"], states: ["jur_texas"],
+      activities: ["production reporting"], integrations: ["enverus", "excel", "dynamics"] } });
+  const gen = await post(`/api/igb/requests/${g.request_id}/generate`, {});
+  ok(gen.status === "generated", "operator intake generates", gen.detail);
+  const rec = await post("/api/deploy/recommend", { tenant_id: g.tenant_id });
+  ok(rec.status === "DETERMINED" && rec.paths[0].artifact.includes("MCP connector"), "MCP connector ranks first (zero integration)");
+  const env = rec.paths.find(p => p.technology === "enverus");
+  ok(env && /web service/i.test(env.artifact), "Enverus → web service sync (APIs, no plugin host)", env?.artifact);
+  const xl = rec.paths.find(p => p.technology === "excel");
+  ok(xl && /add-in/i.test(xl.artifact), "Excel → Office add-in");
+  const dyn = rec.paths.find(p => p.technology === "dynamics");
+  ok(dyn && dyn.status === "NO_PROFILE" && dyn.demand_signal, "unprofiled tool FAILS CLOSED as demand signal");
+  ok((rec.citations || []).length >= 2 && !!rec.receipt_id, "deployment determination is cited and receipted");
+  // CAPTURE from a real trace, REPLAY for a new period
+  const due = await post("/api/reg/report-due", { tenant_id: g.tenant_id, period: "2026-09" });
+  ok(due.status === "DETERMINED", "trace to capture exists", due.reason);
+  const cap = await post("/api/workflows/capture", { receipt_id: due.receipt_id, name: "Monthly obligation cycle" });
+  ok(cap.status === "captured" && cap.steps.length >= 2 && !!cap.receipt_id, "receipt chain captured as generalized package", JSON.stringify(cap.steps));
+  const rp = await post(`/api/workflows/${cap.package_id}/replay`, { tenant_id: g.tenant_id, period: "2026-10" });
+  ok(rp.status === "DETERMINED" && rp.steps.every(s => s.receipt_id), "replay executes for a new period, every step receipted");
+  const bad = await post(`/api/workflows/${cap.package_id}/replay`, { tenant_id: "ten_nobody", period: "2026-10" });
+  ok(bad.status === "INCOMPLETE", "replay for unknown tenant FAILS CLOSED mid-chain");
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

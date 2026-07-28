@@ -518,8 +518,6 @@ const NAV=[
   {type:"div"},
   {id:"udm",label:"UDM Registry",icon:"dns"},
   {id:"auth2",label:"Vault",icon:"lock"},
-  {id:"invocations2",label:"Receipts",icon:"doc",badge:"New"},
-  {id:"platform3",label:"WATCH",icon:"web3"},
 ];
 const ALIAS = {platform3:"platform", auth2:"auth", invocations2:"invocations"};
 const GROUP_OPEN={recents:true,gw:true};
@@ -1378,7 +1376,10 @@ async function bldGenerate(){
    VIEW · Easy Setup — guided click-click intake (no typing needed)
    Clicks ARE the facts: pre-resolved lattice nodes, same receipted pipeline.
    ============================================================= */
-let EZ={step:0,opts:null,name:"",who:"",inds:[],sts:[],acts:[],ints:[],busy:false,result:null,pkg:null};
+let EZ={step:0,opts:null,name:"",who:"",inds:[],sts:[],acts:[],ints:[],busy:false,result:null,pkg:null,q:""};
+function ezFilter(list,get){const q=EZ.q.trim().toLowerCase();if(!q)return list;return list.filter(x=>get(x).toLowerCase().includes(q));}
+function ezSearch(ph){return `<div style="text-align:center;margin-bottom:14px"><input class="input" style="width:340px;border-radius:999px;padding:9px 16px" placeholder="🔍 ${ph}" value="${esc(EZ.q)}" oninput="EZ.q=this.value;route()" autofocus></div>`;}
+function ezEmpty(what){return `<div class="emptybox" style="max-width:520px;margin:0 auto"><div class="et">No ${what} matches “${esc(EZ.q)}”</div><div class="ed">Don't see a selection for you? That tells us exactly what to add next — clear the search to browse everything, or continue and describe your business in your own words in the <a href="#/builder">Identity Graph Builder</a>.</div></div>`;}
 const EZ_STEPS=["Your business","Where you work","What you handle","What you use","All set"];
 function ezTile(sel,label,onclick,sub){return `<button class="btn" style="border:1.5px solid ${sel?"#0e8a16":"var(--line-card)"};background:${sel?"#eef7ee":"#fff"};border-radius:10px;padding:14px 16px;font-size:13.5px;font-weight:600;display:flex;flex-direction:column;align-items:flex-start;gap:3px;min-width:150px;text-align:left" onclick="${onclick}">${sel?"✓ ":""}${esc(label)}${sub?`<span class="mut" style="font-weight:400;font-size:11.5px">${esc(sub)}</span>`:""}</button>`;}
 function ezToggle(arr,v){const i=EZ[arr].indexOf(v); i>=0?EZ[arr].splice(i,1):EZ[arr].push(v); route();}
@@ -1387,8 +1388,8 @@ VIEWS.easy=async function(){
   const o=EZ.opts;
   const prog=`<div class="flex" style="justify-content:center;gap:6px;margin:18px 0 26px">${EZ_STEPS.map((s,i)=>`<span class="chip" style="padding:7px 14px;border-radius:999px;font-size:11.5px;font-weight:600;background:${i<EZ.step?"#eef7ee":i===EZ.step?"#e8f1fd":"#fff"};border:1px solid var(--line-card);color:${i===EZ.step?"#0055dc":i<EZ.step?"#137333":"var(--ink-mut)"}">${i<EZ.step?"✓ ":""}${i+1}. ${s}</span>`).join("")}</div>`;
   const nav=(canNext,nextLabel)=>`<div class="flex" style="justify-content:center;gap:10px;margin-top:26px">
-    ${EZ.step>0&&EZ.step<4?`<button class="btn btn-outline" onclick="EZ.step--;route()">← Back</button>`:""}
-    ${EZ.step<3?`<button class="btn btn-primary" ${canNext?"":"disabled"} onclick="EZ.step++;route()">${nextLabel||"Next →"}</button>`:""}
+    ${EZ.step>0&&EZ.step<4?`<button class="btn btn-outline" onclick="EZ.step--;EZ.q='';route()">← Back</button>`:""}
+    ${EZ.step<3?`<button class="btn btn-primary" ${canNext?"":"disabled"} onclick="EZ.step++;EZ.q='';route()">${nextLabel||"Next →"}</button>`:""}
     ${EZ.step===3?`<button class="btn btn-primary" ${EZ.busy?"disabled":""} onclick="ezBuild()">${EZ.busy?"Setting up…":"✓ Looks right — set it up"}</button>`:""}
   </div>`;
   let bodyHtml="";
@@ -1399,27 +1400,31 @@ VIEWS.easy=async function(){
       <input class="input" style="width:260px" placeholder="Business name (e.g., Jane's Corner Store)" value="${esc(EZ.name)}" oninput="EZ.name=this.value">
       <input class="input" style="width:200px" placeholder="Your name" value="${esc(EZ.who)}" oninput="EZ.who=this.value">
     </div>
-    <div class="flex gap8" style="flex-wrap:wrap;justify-content:center;max-height:340px;overflow:auto;padding:4px">
-      ${o.industries.map(c=>ezTile(EZ.inds.includes(c.code),c.title,`ezToggle('inds','${c.code}')`)).join("")}
-    </div>`;
+    ${ezSearch("Search — try “retail”, “farm”, “software”, “oil”…")}
+    ${ezFilter(o.industries,c=>c.title).length?`<div class="flex gap8" style="flex-wrap:wrap;justify-content:center;max-height:340px;overflow:auto;padding:4px">
+      ${ezFilter(o.industries,c=>c.title).map(c=>ezTile(EZ.inds.includes(c.code),c.title,`ezToggle('inds','${c.code}')`)).join("")}
+    </div>`:ezEmpty("business type")}`;
   if(EZ.step===1) bodyHtml=`
     <h2 style="text-align:center;font-size:22px">Which states do you work in?</h2>
     <div class="mut" style="text-align:center;margin:6px 0 18px">Tap every state where you do business.</div>
-    <div class="flex gap8" style="flex-wrap:wrap;justify-content:center;max-height:360px;overflow:auto;padding:4px">
-      ${o.states.map(s=>ezTile(EZ.sts.includes(s.id),s.name,`ezToggle('sts','${s.id}')`)).join("")}
-    </div>`;
+    ${ezSearch("Search states…")}
+    ${ezFilter(o.states,s=>s.name).length?`<div class="flex gap8" style="flex-wrap:wrap;justify-content:center;max-height:360px;overflow:auto;padding:4px">
+      ${ezFilter(o.states,s=>s.name).map(s=>ezTile(EZ.sts.includes(s.id),s.name,`ezToggle('sts','${s.id}')`)).join("")}
+    </div>`:ezEmpty("state")}`;
   if(EZ.step===2) bodyHtml=`
     <h2 style="text-align:center;font-size:22px">What kinds of work should your assistant help with?</h2>
     <div class="mut" style="text-align:center;margin:6px 0 18px">Tap all that apply — or skip this and we'll start with the basics.</div>
-    <div class="flex gap8" style="flex-wrap:wrap;justify-content:center;max-width:900px;margin:0 auto">
-      ${o.activities.map(a=>ezTile(EZ.acts.includes(a),a,`ezToggle('acts','${a.replace(/'/g,"\\'")}')`)).join("")}
-    </div>`;
+    ${ezSearch("Search — “invoicing”, “reporting”, “scheduling”…")}
+    ${ezFilter(o.activities,a=>a).length?`<div class="flex gap8" style="flex-wrap:wrap;justify-content:center;max-width:900px;margin:0 auto">
+      ${ezFilter(o.activities,a=>a).map(a=>ezTile(EZ.acts.includes(a),a,`ezToggle('acts','${a.replace(/'/g,"\\'")}')`)).join("")}
+    </div>`:ezEmpty("work type")}`;
   if(EZ.step===3) bodyHtml=`
     <h2 style="text-align:center;font-size:22px">Which tools do you already use?</h2>
     <div class="mut" style="text-align:center;margin:6px 0 18px">We'll connect to what you have. Skip anything you don't recognize.</div>
-    <div class="flex gap8" style="flex-wrap:wrap;justify-content:center;max-width:900px;margin:0 auto;margin-bottom:20px">
-      ${o.integrations.map(i=>ezTile(EZ.ints.includes(i),i.charAt(0).toUpperCase()+i.slice(1),`ezToggle('ints','${i}')`)).join("")}
-    </div>
+    ${ezSearch("Search tools — “quickbooks”, “excel”…")}
+    ${ezFilter(o.integrations,i=>i).length?`<div class="flex gap8" style="flex-wrap:wrap;justify-content:center;max-width:900px;margin:0 auto;margin-bottom:20px">
+      ${ezFilter(o.integrations,i=>i).map(i=>ezTile(EZ.ints.includes(i),i.charAt(0).toUpperCase()+i.slice(1),`ezToggle('ints','${i}')`)).join("")}
+    </div>`:ezEmpty("tool")}
     <div class="card card-pad" style="max-width:640px;margin:0 auto;background:#fafcff">
       <b>Here's what we'll set up:</b>
       <div class="small mt8"><b>${esc(EZ.name||"Your business")}</b> · ${EZ.inds.length} line${EZ.inds.length!==1?"s":""} of business · ${EZ.sts.length} state${EZ.sts.length!==1?"s":""} · ${EZ.acts.length} kinds of work · ${EZ.ints.length} tools</div>

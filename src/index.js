@@ -9,6 +9,7 @@ import { executeTool, mcpLog, newId, now } from "./runtime.js";
 import { handleDemoApi, demoSpec } from "./demo.js";
 import { handleFirstClass } from "./firstclass.js";
 import { handleIgb } from "./igb.js";
+import { handleDeploy } from "./deploy.js";
 
 const json = (data, status = 200, headers = {}) =>
   new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json", ...headers } });
@@ -66,6 +67,12 @@ async function handleApi(request, env, url, path) {
   const db = env.DB;
   const method = request.method;
   const body = ["POST", "PATCH", "PUT"].includes(method) ? await request.json().catch(() => ({})) : null;
+
+  /* ---------- Deployment determination + workflow CAPTURE/REPLAY ---------- */
+  if (path.startsWith("/api/deploy/") || path.startsWith("/api/workflows")) {
+    const dp = await handleDeploy(request, env, url, path, body);
+    if (dp) return dp;
+  }
 
   /* ---------- Identity Graph Builder (INGEST → RESOLVE → APPROVE → GENERATE) ---------- */
   if (path.startsWith("/api/igb/")) {
