@@ -11,6 +11,9 @@ import { handleFirstClass } from "./firstclass.js";
 import { handleIgb } from "./igb.js";
 import { handleDeploy } from "./deploy.js";
 
+const CORS = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, POST, OPTIONS, DELETE",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, Mcp-Session-Id, MCP-Protocol-Version, Last-Event-ID",
+  "Access-Control-Expose-Headers": "Mcp-Session-Id" };
 const json = (data, status = 200, headers = {}) =>
   new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json", ...headers } });
 const httpErr = (status, detail) => json({ detail }, status);
@@ -34,9 +37,30 @@ export default {
         if (path === "/demo-api/openapi-spec.json") return json(demoSpec(url.origin));
         return await handleDemoApi(request, path.slice("/demo-api".length));
       }
+      // OAuth discovery probes from connector clients (Claude.ai, ChatGPT, Copilot):
+      // a 404 here tells them "no auth required" — the SPA fallback's 200-HTML made them
+      // believe an unfinishable auth step existed ("You are not connected yet").
+      if (path.startsWith("/.well-known/") || path === "/register") {
+        return json({ error: "not_found" }, 404, CORS);
+      }
       const mcpMatch = path.match(/^\/mcp\/([\w-]+)$/);
       if (mcpMatch) {
-        if (request.method === "GET") return new Response(null, { status: 405, headers: { Allow: "POST" } });
+        if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
+        if (request.method === "DELETE") return new Response(null, { status: 202, headers: CORS }); // session teardown
+        if (request.method === "GET") {
+          // Streamable HTTP: offer a server->client SSE stream with keepalive pings
+          if ((request.headers.get("Accept") || "").includes("text/event-stream")) {
+            const enc = new TextEncoder();
+            const stream = new ReadableStream({
+              start(controller) {
+                controller.enqueue(enc.encode(": connected\n\n"));
+                const t = setInterval(() => { try { controller.enqueue(enc.encode(": ping\n\n")); } catch { clearInterval(t); } }, 15000);
+              },
+            });
+            return new Response(stream, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", ...CORS } });
+          }
+          return new Response(null, { status: 405, headers: { Allow: "POST, GET, OPTIONS, DELETE", ...CORS } });
+        }
         if (request.method !== "POST") return httpErr(405, "POST only");
         let body;
         try { body = await request.json(); } catch {
@@ -48,10 +72,10 @@ export default {
             const r = await handleRpc(db, mcpMatch[1], msg);
             if (r !== null) results.push(r);
           }
-          return results.length ? json(results) : new Response(null, { status: 202 });
+          return results.length ? json(results, 200, CORS) : new Response(null, { status: 202, headers: CORS });
         }
         const result = await handleRpc(db, mcpMatch[1], body);
-        return result === null ? new Response(null, { status: 202 }) : json(result);
+        return result === null ? new Response(null, { status: 202, headers: CORS }) : json(result, 200, CORS);
       }
       if (path.startsWith("/api/")) return await handleApi(request, env, url, path);
       // static console
