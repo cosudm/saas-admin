@@ -297,9 +297,10 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
   </div>
   <div class="zonecrumb" id="zoneCrumb"></div>
   <div class="spacer"></div>
-  <button class="topact"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg> Support</button>
-  <button class="topact"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></button>
+  <button class="topact" onclick="toggleHelp()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg> Support</button>
+  <button class="topact" title="Settings" onclick="location.hash='#/settings'"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></button>
 </div>
+<div id="helpDrawer" style="display:none;position:fixed;top:48px;right:0;bottom:0;width:390px;background:#fff;border-left:1px solid var(--line);box-shadow:-8px 0 24px rgba(0,0,0,.07);z-index:60;overflow:auto;padding:20px 22px"></div>
 <div class="layout">
   <nav class="sidebar" id="sidebar"></nav>
   <div class="main">
@@ -1460,6 +1461,72 @@ async function ezBuild(){
   EZ.busy=false; EZ.step=4; route();
 }
 
+
+/* ============================ Support drawer (contextual help) ============================ */
+const HELP={
+overview:{t:"Overview",d:"Your fleet at a glance.",flow:["Import an API","Tools generate","Server goes live"],pts:["KPIs cover servers, tools, 24h calls and latency.","Every number links to its detail view.","Start with Import API or Easy Setup if this page is empty."]},
+builder:{t:"Identity Graph Builder",d:"Describe a business in plain language — get a governed MCP server.",flow:["INGEST facts","RESOLVE via UDM","APPROVE (maker-checker)","GENERATE live server"],pts:["The checker must be a different person than the maker.","NO_DETERMINATION means outside the closed world — never a guess.","Every stage writes a receipt you can verify in Governance Review."]},
+easy:{t:"Easy Setup",d:"Four tap-through questions — no typing skills needed.",flow:["Business","States","Work","Tools → live assistant"],pts:["Clicks are pre-validated lattice facts — 100% precision.","Use the search box to narrow tiles; no match = tell us what's missing.","The final screen gives a connector address for Claude/ChatGPT/Copilot."]},
+bridge:{t:"Import API",d:"Turn any API spec into governed MCP tools.",flow:["Paste spec","Preview tools","Deploy /mcp/{slug}"],pts:["REST (OpenAPI/Swagger), GraphQL, SOAP WSDL and gRPC proto all work.","Try the WellView sample for a zero-dependency demo.","Attach an Auth Profile so credentials stay in the Vault — never in the client."]},
+servers:{t:"MCP Servers",d:"Every live endpoint, one card each.",pts:["Copy the endpoint into any AI client as a custom connector.","Code Mode collapses big catalogs to 3 meta-tools (~98% less context).","Rate limits, retries and log level are per-server settings."]},
+tools:{t:"Tool Registry",d:"Every generated tool with schema and governance.",pts:["Click a tool to see its JSON schema and behavioural annotations.","Disable a tool to remove it from tools/list instantly.","Curated descriptions improve how AI models pick tools."]},
+auth:{t:"Vault / Auth Profiles",d:"Upstream credentials, injected server-side.",pts:["Bearer, Basic, API-key, OAuth2 client-credentials and Cognito.","AI clients never see these values — injection happens at execution.","One profile can serve many servers."]},
+analytics:{t:"Analytics",d:"Latency, throughput, tokens and errors.",pts:["p50/p95 computed over the selected window.","Token savings shows what post-processing stripped before the model saw it."]},
+invocations:{t:"Invocations",d:"The receipt log of every tool call.",pts:["Each row: status, latency, bytes, token estimate and via (MCP vs REST).","Filter by server or status to isolate problems fast."]},
+logs:{t:"MCP Logs",d:"Structured protocol log.",pts:["logging/setLevel from any client changes verbosity live."]},
+connect:{t:"Connect AI Client",d:"Wire any surface to your servers.",pts:["Claude Code: claude mcp add --transport http {name} {endpoint}","Claude.ai / ChatGPT: add as custom connector, no authentication.","Copilot Studio: add as MCP custom connector.","If a client says 'not connected', remove and re-add it once — auth discovery is cached."]},
+reg:{t:"Reg Reporting",d:"Deterministic obligations from the identity graph.",flow:["Determine","Report due","Human submits"],pts:["Determinations cite the agency source and carry a receipt.","Events cannot exist without receipts — fail closed.","AI drafts; a named human submits every filing."]},
+gov:{t:"Governance Review",d:"The receipt chain and taxonomy gates.",pts:["Verify recomputes hashes back to genesis — any tamper breaks it.","Forbidden traversals (e.g. GICS-origin) are refusals, and refusals are receipted too.","Provenance coverage must read fully-sourced."]},
+platform:{t:"Deployment Modes",d:"Where and how capabilities land.",pts:["Managed edge today; the deployment matrix ranks per-tenant paths (API sync, add-in, plugin, widget).","POST /api/deploy/recommend returns ranked runtimes for any tenant."]},
+udm:{t:"UDM Registry",d:"The lattice: 88 industries, ISIC-anchored.",pts:["UDM-GI → ISIC (anchor) → NAICS (bridge) → GICS (presentation).","Traversals outside boundary rules fail closed.","Every crosswalk edge is cited."]},
+settings:{t:"Settings",d:"Workspace, versions and access.",pts:["Semantic state versions shown here appear in every receipt.","Service tokens for scripted API access are managed in Cloudflare Zero Trust."]}};
+let helpOpen=false;
+function toggleHelp(){helpOpen=!helpOpen;renderHelp();}
+function renderHelp(){
+  const el=document.getElementById("helpDrawer");
+  if(!helpOpen){el.style.display="none";return;}
+  const id=(location.hash.replace("#/","")||"overview").split("?")[0];
+  const h=HELP[id]||HELP.overview;
+  const flow=h.flow?`<div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:12px 0;padding:10px;background:#fafcff;border:1px solid var(--line-soft);border-radius:8px">${h.flow.map((s,i)=>`<span class="chip cat" style="background:#e8f1fd;color:#0055dc;font-size:11px">${s}</span>${i<h.flow.length-1?'<span style="color:#94a3b8">→</span>':''}`).join("")}</div>`:"";
+  el.style.display="block";
+  el.innerHTML=`<div class="flex"><h3 style="font-size:15px">${I(P.info,16)} ${esc(h.t)}</h3>
+    <button class="btn btn-outline btn-sm" style="margin-left:auto" onclick="toggleHelp()">✕</button></div>
+  <div class="mut small mt8">${esc(h.d)}</div>${flow}
+  <ul style="margin:10px 0 0 16px;display:flex;flex-direction:column;gap:9px">${h.pts.map(p=>`<li style="font-size:12.5px;line-height:1.5">${esc(p)}</li>`).join("")}</ul>
+  <div style="border-top:1px solid var(--line-soft);margin-top:16px;padding-top:12px" class="small">
+    <b>More help</b><div class="mt8" style="display:flex;flex-direction:column;gap:6px">
+    <a href="/api/contracts/openapi.json" target="_blank">API contracts (OpenAPI)</a>
+    <a href="#/gov" onclick="helpOpen=false;renderHelp()">Verify a receipt</a>
+    <a href="mailto:support@smeprotechnologies.com">support@smeprotechnologies.com</a></div></div>`;
+}
+window.addEventListener("hashchange",()=>{if(helpOpen)renderHelp();});
+
+/* ============================ Settings ============================ */
+VIEWS.settings=async function(){
+  const [ov,meta]=await Promise.all([api("/api/overview"),api("/api/receipts?limit=1").catch(()=>[])]);
+  const sst=meta[0]&&meta[0].sst?JSON.parse(meta[0].sst||"{}"):{scl:"0.1",lattice:"L1-2026.07",atlas:"none"};
+  return `<div class="container">
+  <div class="pagehead"><h1>${I(P.gear||P.info,24)} Settings</h1></div>
+  <div class="subtitle">Workspace configuration, semantic versions and access.</div>
+  <div class="card card-pad mb14"><h3>Workspace</h3>
+    <div class="small mt8">Organization: <b>SME Pro Technologies</b> · Console: <span style="font-family:ui-monospace,monospace">${esc(location.host)}</span></div>
+    <div class="small mut mt8">${ov.servers} servers · ${ov.tools} tools · ${ov.analytics?ov.analytics.calls_24h??"—":"—"} calls (24h)</div></div>
+  <div class="card card-pad mb14"><h3>Semantic state (pinned into every receipt)</h3>
+    <table class="tbl" style="margin-top:8px"><tbody>
+    <tr><td>SCL protocol</td><td style="font-family:ui-monospace,monospace">${esc(sst.scl||"0.1")}</td></tr>
+    <tr><td>Lattice version</td><td style="font-family:ui-monospace,monospace">${esc(sst.lattice||"L1-2026.07")}</td></tr>
+    <tr><td>Embedding atlas</td><td style="font-family:ui-monospace,monospace">${esc(sst.atlas||"none")} <span class="mut">(enable Workers AI to build)</span></td></tr>
+    <tr><td>Engine</td><td style="font-family:ui-monospace,monospace">${esc(sst.engine||"deterministic-core")}</td></tr></tbody></table></div>
+  <div class="card card-pad mb14"><h3>Access & security</h3>
+    <div class="small mt8" style="line-height:1.7">Console and /api/* are protected by Cloudflare Access (email login).<br>
+    /mcp/* endpoints are public by design — governed, receipted, no credentials exposed.<br>
+    Scripted access: create a service token in <a href="https://one.dash.cloudflare.com" target="_blank">Zero Trust → Service credentials</a> and send CF-Access-Client-Id/Secret headers.</div></div>
+  <div class="card card-pad"><h3>Data</h3>
+    <div class="small mt8">Store: Cloudflare D1 (edge SQLite) · migrations 0001–0011 applied · receipts are append-only and tamper-evident.</div>
+    <div class="mt8"><a class="btn btn-outline btn-sm" href="/api/contracts/openapi.json" target="_blank">${I(P.doc,13)} API contracts</a></div></div>
+  </div>`;
+};
+
 /* =============================================================
    router / boot
    ============================================================= */
@@ -1467,7 +1534,7 @@ async function route(){
   const hash=(location.hash||"#/overview").replace("#/","");
   CUR=VIEWS[hash]?hash:"overview";
   $("#sidebar").innerHTML=navHTML(CUR);
-  const crumbs={overview:"Gateway Bridge",bridge:"Gateway Bridge / Import",servers:"Gateway Bridge / MCP Servers",tools:"Gateway Bridge / Tool Registry",
+  const crumbs={settings:"Account / Settings",overview:"Gateway Bridge",bridge:"Gateway Bridge / Import",servers:"Gateway Bridge / MCP Servers",tools:"Gateway Bridge / Tool Registry",
     auth:"Gateway Bridge / Vault",analytics:"Gateway Bridge / Analytics",invocations:"Gateway Bridge / Receipts",logs:"Gateway Bridge / MCP Logs",
     connect:"Connect AI Client",platform:"IOS+ Platform",udm:"UDM Registry / Crosswalk",reg:"Reg Reporting / Obligations",gov:"Governance Review / Receipts",builder:"LENS / Identity Graph Builder",easy:"LENS / Easy Setup"};
   $("#zoneCrumb").innerHTML=`<span class="zname">${esc(crumbs[CUR]||"Gateway Bridge")}</span><span class="zbadge">Self-hosted</span>`;
