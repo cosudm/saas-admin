@@ -504,6 +504,7 @@ const NAV=[
     {id:"overview",label:"Overview"},
     {id:"builder",label:"Identity Graph Builder",badge:"New"},
     {id:"easy",label:"Easy Setup",badge:"New"},
+    {id:"flows",label:"Workflows",badge:"New"},
     {id:"bridge",label:"Import API",badge:"New"},
     {id:"servers",label:"MCP Servers"},
     {id:"tools",label:"Tool Registry"},
@@ -649,25 +650,32 @@ VIEWS.bridge=async function(){
   const protos=Object.entries(PROTO_LABELS);
   return `<div class="container" style="max-width:1180px">
     <div class="pagehead"><h1>${I(P.workers,26)} Gateway Bridge</h1><div class="right">${docBtn()}</div></div>
-    <div class="subtitle">Turn any existing API into <b>governed</b> MCP tools. Point it at a schema — it auto-generates typed tool definitions, then validates, authenticates, rate-limits, receipts and post-processes every call at runtime. No custom integration code.</div>
+    <div class="subtitle"><b>Connect the software you already use.</b> Paste the link or document your software provider gave you — we detect what it is, figure out what it can do, and turn those abilities into safe, governed tools your AI can use. No coding, no configuration.</div>
 
     <div class="banner-info mb20" style="max-width:1020px">${I(P.info,14)} <span>Unlike a plain REST-to-MCP gateway, every tool the Bridge generates is <b>identity-scoped, obligation-gated and receipt-backed</b> — one control plane, a receipt on every call. For large APIs, <b>Code Mode</b> collapses the catalogue to 3 meta-tools, cutting context window usage by ~98%.</span></div>
 
     <div class="card card-pad mb14">
-      <label class="fieldlabel">Source protocol</label>
+      <div class="flex mb14" style="align-items:center;gap:10px">
+        <button class="btn btn-primary" style="border-radius:999px" onclick="loadSample();runBridge()">✳ Try it instantly — see the sample work</button>
+        <span class="mut small">Not sure what any of this means? Click that button and watch.</span>
+        <span style="flex:1"></span>
+        <button style="color:var(--blue);font-size:12px" onclick="IMP.adv=!IMP.adv;route()">${IMP.adv?"▾ Hide":"▸ Advanced"} options</button>
+      </div>
+      ${!IMP.adv?`<div class="small mut mb14">Format: <b style="color:var(--ink)">${esc(PROTO_LABELS[IMP.proto][0])}</b> — detected automatically from what you paste.</div>`:""}
+      ${IMP.adv?`<label class="fieldlabel">Source protocol</label>
       <div class="flex gap8 mb14" style="flex-wrap:wrap">
         ${protos.map(([k,v])=>`<button class="chip" style="padding:8px 14px;border:1.5px solid ${IMP.proto===k?"var(--blue)":"#cfd4db"};border-radius:8px;background:${IMP.proto===k?"var(--blue-pale)":"#fff"};color:${IMP.proto===k?"var(--blue)":"var(--ink)"};font-weight:${IMP.proto===k?"600":"400"}" onclick="IMP.proto='${k}';IMP.error=null;IMP.parsed=null;route()">${v[0]} <span class="mut" style="font-size:11px">· ${v[1]}</span></button>`).join("")}
-      </div>
+      </div>`:""}
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px" class="mb14">
-        <div><label class="fieldlabel">Schema URL <span class="mut" style="font-weight:400">(optional — fetched server-side${IMP.proto==="graphql"?"; GraphQL endpoints are introspected":""})</span></label>
+        <div><label class="fieldlabel">Link from your software provider <span class="mut" style="font-weight:400">(the API or documentation address — we fetch it for you)</span></label>
           <input class="input" style="width:100%" placeholder="${IMP.proto==="rest"?"https://api.example.com/openapi.json":IMP.proto==="graphql"?"https://api.example.com/graphql":IMP.proto==="soap"?"https://svc.example.com/service?wsdl":"paste .proto below"}" value="${esc(IMP.url)}" oninput="IMP.url=this.value"></div>
-        <div><label class="fieldlabel">Upstream base URL <span class="mut" style="font-weight:400">(where calls are executed)</span></label>
+        <div><label class="fieldlabel">Your software's web address <span class="mut" style="font-weight:400">(optional — usually found automatically)</span></label>
           <input class="input" style="width:100%" placeholder="https://api.example.com${IMP.proto==="grpc"?"  (Connect / grpc-gateway JSON endpoint)":""}" value="${esc(IMP.baseUrl)}" oninput="IMP.baseUrl=this.value"></div>
       </div>
 
       <div class="flex" style="justify-content:space-between;align-items:flex-end;margin-bottom:6px">
-        <label class="fieldlabel" style="margin:0">Paste your ${PROTO_LABELS[IMP.proto][1]} document</label>
+        <label class="fieldlabel" style="margin:0">…or paste the document here <span class="mut" style="font-weight:400">(any format — we'll recognize it)</span></label>
         <button style="color:var(--blue);font-size:12px" onclick="loadSample()">Load the WellView sample</button>
       </div>
       <textarea class="input" id="brSrc" style="width:100%;min-height:170px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px" placeholder='${IMP.proto==="rest"?'{ "openapi": "3.0.1", "info": {...}, "paths": {...} }  — JSON or YAML':IMP.proto==="graphql"?"type Query { ... }   — SDL, or an introspection JSON result":IMP.proto==="soap"?"<definitions ...>  — WSDL XML":'syntax = "proto3"; service ... { rpc ... }'}' oninput="IMP.src=this.value">${esc(IMP.src)}</textarea>
@@ -726,7 +734,15 @@ function loadSample(){
   route();
 }
 
+function detectProto(text,url){
+  const t=(text||"").trim(), u=(url||"").toLowerCase();
+  if(/^\s*syntax\s*=\s*"proto|\brpc\s+\w+\s*\(/.test(t)) return "grpc";
+  if(/<definitions|<wsdl:|\?wsdl/.test(t)||u.includes("wsdl")) return "soap";
+  if(/\btype\s+(Query|Mutation)\b|__schema/.test(t)||u.includes("graphql")) return "graphql";
+  return "rest";
+}
 async function runBridge(){
+  if(!IMP.adv){ const d=detectProto(IMP.src,IMP.url); if(d!==IMP.proto){ IMP.proto=d; } }
   IMP.error=null; IMP.busy=true; IMP.parsed=null; route();
   try{
     const r=await api("/api/import/preview",{method:"POST",body:JSON.stringify({protocol:IMP.proto,spec_text:IMP.src,spec_url:IMP.url||null,base_url:IMP.baseUrl||null})});
@@ -1527,6 +1543,82 @@ VIEWS.settings=async function(){
   </div>`;
 };
 
+
+/* =============================================================
+   VIEW · Workflows — capture receipted outcomes, replay, deploy-as
+   The productization loop: outcome → capture → package → deploy options
+   ============================================================= */
+let FL={rec:null,recFor:null};
+VIEWS.flows=async function(){
+  const [pkgs,rcts,tenants]=await Promise.all([api("/api/workflows"),api("/api/receipts?limit=25"),api("/api/ig/tenants")]);
+  const tname=Object.fromEntries(tenants.map(t=>[t.id,t.name]));
+  const capturable=rcts.filter(r=>["report_due","determination","tool_invocation","decode","graph_position"].includes(r.kind));
+  return `<div class="container wide">
+  <div class="pagehead"><h1>${I(P.bolt,26)} Workflows</h1></div>
+  <div class="subtitle">When an AI answer solves the problem, the chain of steps that produced it is already receipted. Capture it here as a reusable package — then replay it on demand, or see how it deploys into your stack.</div>
+
+  <div class="card mb14">
+    <div class="card-pad flex" style="border-bottom:1px solid var(--line-soft)"><h3>1 · Recent receipted outcomes</h3>
+      <span class="mut small" style="margin-left:auto">pick the end result worth keeping → Capture</span></div>
+    ${capturable.length?`<table class="tbl"><thead class="shade"><tr><th>Kind</th><th>Subject</th><th>Tenant</th><th>Receipt</th><th style="width:170px"></th></tr></thead><tbody>
+      ${capturable.slice(0,10).map(r=>`<tr>
+        <td><span class="chip cat" style="background:#e8f1fd;color:#0055dc">${esc(r.kind)}</span></td>
+        <td class="small">${esc(r.subject||"—")}</td>
+        <td class="small">${esc(tname[r.tenant_id]||r.tenant_id||"—")}</td>
+        <td style="font-family:ui-monospace,monospace;font-size:11px">${esc(r.id.slice(0,16))}…</td>
+        <td><button class="btn btn-primary btn-sm" onclick="flCapture('${r.id}')">${I(P.plus,13)} Capture as workflow</button></td>
+      </tr>`).join("")}</tbody></table>`
+    :`<div class="emptybox"><div class="et">No outcomes yet</div><div class="ed">Ask your connected AI a question through any provisioned server — every determination lands here, ready to capture.</div></div>`}
+  </div>
+
+  <div class="card mb14">
+    <div class="card-pad flex" style="border-bottom:1px solid var(--line-soft)"><h3>2 · Captured workflow packages</h3>
+      <span class="mut small" style="margin-left:auto">generalized — tenant &amp; period are parameters</span></div>
+    ${pkgs.length?`<table class="tbl"><thead class="shade"><tr><th>Package</th><th>Owner tenant</th><th>Status</th><th>Receipt</th><th style="width:290px"></th></tr></thead><tbody>
+      ${pkgs.map(w=>`<tr>
+        <td><b style="font-size:13px">${esc(w.name)}</b><div class="rowsub">from ${esc((w.source_receipt_id||"").slice(0,14))}…</div></td>
+        <td class="small">${esc(tname[w.tenant_id]||w.tenant_id||"—")}</td>
+        <td><span class="chip cat" style="background:#eef7ee;color:#0e6b0e">${esc(w.status)}</span></td>
+        <td style="font-family:ui-monospace,monospace;font-size:11px">${esc((w.id||"").slice(0,14))}…</td>
+        <td class="flex gap8">
+          <button class="btn btn-outline btn-sm" onclick="flReplay('${w.id}','${esc(w.tenant_id||"")}')">${I(P.bolt,13)} Replay</button>
+          <button class="btn btn-outline btn-sm" onclick="flDeploy('${esc(w.tenant_id||"")}','${esc(w.name)}')">${I(P.crawl,13)} Deploy options</button>
+        </td></tr>`).join("")}</tbody></table>`
+    :`<div class="emptybox"><div class="et">No packages captured yet</div><div class="ed">Capture an outcome above — the receipt chain behind it becomes a named, replayable procedure.</div></div>`}
+  </div>
+
+  ${FL.rec?`<div class="card" style="border-color:#9fd3a8">
+    <div class="card-pad flex" style="border-bottom:1px solid var(--line-soft)"><h3>3 · Deploy “${esc(FL.recFor||"")}” into your stack</h3>
+      <span class="mut small" style="margin-left:auto">ranked easiest landing first — determined from the identity graph, cited &amp; receipted</span></div>
+    <table class="tbl"><thead class="shade"><tr><th>#</th><th>Where</th><th>Deploy as</th><th>Why</th><th>Status</th></tr></thead><tbody>
+    ${FL.rec.paths.map((p,i)=>`<tr>
+      <td>${i+1}</td><td><b style="font-size:12.5px">${esc(p.technology)}</b>${p.vendor?`<div class="rowsub">${esc(p.vendor)}</div>`:""}</td>
+      <td style="font-size:12.5px">${esc(p.artifact||"—")}</td>
+      <td class="small mut" style="max-width:380px">${esc(p.rationale||"")}</td>
+      <td>${p.status==="DETERMINED"||p.status==="AVAILABLE"?`<span class="chip cat" style="background:#dff6dd;color:#0e6b0e">${esc(p.status.toLowerCase())}</span>`:`<span class="chip cat" style="background:#fff7e6;color:#8a6116">not profiled yet</span>`}</td>
+    </tr>`).join("")}</tbody></table>
+    <div class="card-pad small mut" style="border-top:1px solid var(--line-soft)">Determination receipt: <span style="font-family:ui-monospace,monospace;font-size:11px">${esc(FL.rec.receipt_id||"")}</span></div>
+  </div>`:""}
+  </div>`;
+};
+async function flCapture(rid){
+  const name=prompt("Name this workflow (e.g., Monthly production cycle):"); if(!name)return;
+  try{ const r=await api("/api/workflows/capture",{method:"POST",body:JSON.stringify({receipt_id:rid,name})});
+    toast("Captured — "+r.steps.length+" generalized steps, receipt "+r.receipt_id); }catch(e){ toast(e.message); }
+  route();
+}
+async function flReplay(id,ten){
+  const period=prompt("Replay for period (YYYY-MM):", "2026-08"); if(!period)return;
+  try{ const r=await api("/api/workflows/"+id+"/replay",{method:"POST",body:JSON.stringify({tenant_id:ten,period})});
+    toast("Replay "+r.status+" — "+r.steps.length+" steps, all receipted"); }catch(e){ toast(e.message); }
+  route();
+}
+async function flDeploy(ten,name){
+  try{ FL.rec=await api("/api/deploy/recommend",{method:"POST",body:JSON.stringify({tenant_id:ten})}); FL.recFor=name; }
+  catch(e){ toast(e.message); }
+  route();
+}
+
 /* =============================================================
    router / boot
    ============================================================= */
@@ -1534,7 +1626,7 @@ async function route(){
   const hash=(location.hash||"#/overview").replace("#/","");
   CUR=VIEWS[hash]?hash:"overview";
   $("#sidebar").innerHTML=navHTML(CUR);
-  const crumbs={settings:"Account / Settings",overview:"Gateway Bridge",bridge:"Gateway Bridge / Import",servers:"Gateway Bridge / MCP Servers",tools:"Gateway Bridge / Tool Registry",
+  const crumbs={flows:"Gateway Bridge / Workflows",settings:"Account / Settings",overview:"Gateway Bridge",bridge:"Gateway Bridge / Import",servers:"Gateway Bridge / MCP Servers",tools:"Gateway Bridge / Tool Registry",
     auth:"Gateway Bridge / Vault",analytics:"Gateway Bridge / Analytics",invocations:"Gateway Bridge / Receipts",logs:"Gateway Bridge / MCP Logs",
     connect:"Connect AI Client",platform:"IOS+ Platform",udm:"UDM Registry / Crosswalk",reg:"Reg Reporting / Obligations",gov:"Governance Review / Receipts",builder:"LENS / Identity Graph Builder",easy:"LENS / Easy Setup"};
   $("#zoneCrumb").innerHTML=`<span class="zname">${esc(crumbs[CUR]||"Gateway Bridge")}</span><span class="zbadge">Self-hosted</span>`;
